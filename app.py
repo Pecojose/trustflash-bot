@@ -68,19 +68,39 @@ def get_gex():
         raise ValueError("Empty GEX frame")
     return gex.tail(60)
 
+# --------------------------------------------------
+# UTILITY
+# --------------------------------------------------
+
+def safe_float(value: float | int | pd.Series) -> float | None:
+    """Convert to python float; return None if not finite."""
+    try:
+        num = float(value)
+        if pd.isna(num) or pd.isnull(num):
+            return None
+        return num
+    except Exception:
+        return None
 
 # --------------------------------------------------
 # VIX SECTION
 # --------------------------------------------------
 try:
     vix_df = get_vix()
+    latest_vix = safe_float(vix_df["Close"].iloc[-1])
+    latest_ma = safe_float(vix_df["MA20"].iloc[-1])
 
     # Metrics row
     col1, col2 = st.columns(2)
-    latest_vix = vix_df["Close"].iloc[-1]
-    latest_ma = vix_df["MA20"].iloc[-1]
-    col1.metric("Current VIX", f"{latest_vix:.2f}")
-    col2.metric("20‑Day Avg", f"{latest_ma:.2f}")
+    if latest_vix is not None:
+        col1.metric("Current VIX", f"{latest_vix:.2f}")
+    else:
+        col1.metric("Current VIX", "–")
+
+    if latest_ma is not None:
+        col2.metric("20‑Day Avg", f"{latest_ma:.2f}")
+    else:
+        col2.metric("20‑Day Avg", "–")
 
     # Chart
     st.subheader("VIX Trend vs 20‑Day Moving Average")
@@ -114,7 +134,8 @@ except (URLError, ValueError):
 # --------------------------------------------------
 # FOOTER
 # --------------------------------------------------
+
 st.markdown("<hr style='margin-top:30px;margin-bottom:10px'>", unsafe_allow_html=True)
 left, right = st.columns([3, 1])
-left.caption("Data refreshed every 15 min • Prototype v0.2")
+left.caption("Data refreshed every 15 min • Prototype v0.3")
 right.caption("© 2025 TrustFlashTrade")
