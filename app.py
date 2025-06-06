@@ -63,33 +63,39 @@ def safe_float(val):
 
 @st.cache_data(ttl=900, show_spinner=False)
 
-def get_vix() -> pd.DataFrame:
-    """Fetch 6 m of daily VIX data and compute 20‑day MA."""
-    df = yf.Ticker("^VIX").history(period="6mo", interval="1d", auto_adjust=False)
-    if df.empty or len(df) < 30:
-        raise ValueError("Insufficient VIX data")
-    df["MA20"] = df["Close"].rolling(20).mean()
-    return df.tail(90)
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-
 def get_gex() -> pd.DataFrame:
-    """Fetch last 60 d of SPX Gamma Exposure (GEX) with fallback download."""
-    import io, requests
+    """Download last 60 d of SPX Gamma Exposure (GEX).
 
-    url = "https://raw.githubusercontent.com/SqueezeMetrics/legacy-data/master/spy_gex.csv"
+    Order of attempts:
+    1. **Primary** – raw GitHub CSV (may fail on Streamlit Cloud due to rate‑limits).
+    2. **Mirror**   – jsDelivr CDN cache of the same file.
+    3. **Local**    – bundled `sample_gex.csv` ensures the chart never disappears
+       (shows data but marks it as *sample*).
+    """
+    import io, requests, importlib.resources as pkg_resources
+
+    urls = [
+        "https://raw.githubusercontent.com/SqueezeMetrics/legacy-data/master/spy_gex.csv",
+        "https://cdn.jsdelivr.net/gh/SqueezeMetrics/legacy-data@master/spy_gex.csv",
+    ]
+
+    for src in urls:
+        try:
+            df = pd.read_csv(src, parse_dates=["date"], dtype={"GEX": "float"})
+            if not df.empty and "GEX" in df.columns:
+                df["_source"] = src  # keep track of origin
+                return df.tail(60)
+        except Exception:
+            continue  # try next mirror
+
+    # ---------- local bundled sample as last resort ----------
     try:
-        df = pd.read_csv(url, parse_dates=["date"], dtype={"GEX": "float"})
-    except Exception:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "trustflash-bot"})
-        if resp.status_code != 200:
-            raise ValueError("GEX source unreachable (status != 200)")
-        df = pd.read_csv(io.StringIO(resp.text), parse_dates=["date"], dtype={"GEX": "float"})
-
-    if df.empty or "GEX" not in df.columns:
-        raise ValueError("GEX data missing or schema changed")
-    return df.tail(60)
+        raw = pkg_resources.read_text(__package__ or "__main__", "sample_gex.csv")
+        df = pd.read_csv(io.StringIO(raw), parse_dates=["date"], dtype={"GEX": "float"})
+        df["_source"] = "local_sample"
+        return df.tail(60)
+    except Exception as e:
+        raise ValueError("All GEX sources failed – " + str(e))
 
 # --------------------------------------------------
 # VIX SECTION
