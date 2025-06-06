@@ -61,27 +61,30 @@ def safe_float(val: float | int | pd.Series | None) -> float | None:
         return None
 
 
-@st.cache_data(ttl=900, show_spinner=False)  # 15 min cache
-
-def get_vix() -> pd.DataFrame:
-    """Download last 6 months of VIX data and add 20‑day MA.
-    Raises *ValueError* if < 30 rows returned.
-    """
-    df = yf.Ticker("^VIX").history(period="6mo", interval="1d", auto_adjust=False)
-    if df.empty or len(df) < 30:
-        raise ValueError("Insufficient VIX data")
-    df["MA20"] = df["Close"].rolling(20).mean()
-    return df.tail(90)
-
-
 @st.cache_data(ttl=900, show_spinner=False)
 
 def get_gex() -> pd.DataFrame:
-    """Fetch last 60 days of SPX GEX values from SqueezeMetrics repo."""
+    """Fetch last 60 days of SPX Gamma Exposure (GEX).
+
+    Primary source: raw GitHub CSV. If pandas direct download fails—often due
+    to GitHub throttling—fall back to a `requests` call and parse from memory.
+    """
     url = "https://raw.githubusercontent.com/SqueezeMetrics/legacy-data/master/spy_gex.csv"
-    df = pd.read_csv(url, parse_dates=["date"])
+
+    # ---------- fast path: let pandas handle the download ----------
+    try:
+        df = pd.read_csv(url, parse_dates=["date"], dtype={"GEX": "float"})
+    except Exception:
+        # ---------- fallback via requests ----------
+        import io, requests
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "trustflash-bot"})
+        if resp.status_code != 200:
+            raise ValueError("GEX source unreachable (status != 200)")
+        df = pd.read_csv(io.StringIO(resp.text), parse_dates=["date"], dtype={"GEX": "float"})
+
     if df.empty or "GEX" not in df.columns:
-        raise ValueError("GEX source unavailable or schema changed")
+        raise ValueError("GEX data missing or schema changed")
+
     return df.tail(60)
 
 # --------------------------------------------------
