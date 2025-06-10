@@ -46,23 +46,20 @@ def safe_float(val):
 
 @st.cache_data(ttl=900, show_spinner=False)
 
-def get_vix() -> pd.DataFrame:
-    """6‑month daily VIX with 20‑day MA; ≥30 rows else ValueError."""
-    df = yf.Ticker("^VIX").history(period="6mo", interval="1d", auto_adjust=False)
-    if df.empty or len(df) < 30:
-        raise ValueError("Insufficient VIX data")
-    df["MA20"] = df["Close"].rolling(20).mean()
-    return df.tail(90)
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-
 def get_gex() -> pd.DataFrame:
-    """Return last 60 d of SPX GEX from primary, mirror or local sample."""
+    """Return last 60 d of SPX Gamma Exposure (GEX) with multiple fallbacks.
+
+    1. Raw GitHub CSV  
+    2. jsDelivr CDN mirror  
+    3. Local `sample_gex.csv` shipped with the repo (ensures UI never breaks).
+    """
+    import pathlib
+
     urls = [
         "https://raw.githubusercontent.com/SqueezeMetrics/legacy-data/master/spy_gex.csv",
         "https://cdn.jsdelivr.net/gh/SqueezeMetrics/legacy-data@master/spy_gex.csv",
     ]
+
     for src in urls:
         try:
             df = pd.read_csv(src, parse_dates=["date"], dtype={"GEX": "float"})
@@ -71,14 +68,15 @@ def get_gex() -> pd.DataFrame:
                 return df.tail(60)
         except Exception:
             continue
-    # fallback bundled sample
-    try:
-        raw = pkg_resources.read_text(__package__ or "__main__", "sample_gex.csv")
-        df = pd.read_csv(io.StringIO(raw), parse_dates=["date"], dtype={"GEX": "float"})
-        df["_source"] = "local_sample"
-        return df.tail(60)
-    except Exception as e:
-        raise ValueError("All GEX sources failed → " + str(e))
+
+    # ---- local fallback ----
+    local_path = pathlib.Path(__file__).with_name("sample_gex.csv")
+    if local_path.exists():
+        df_local = pd.read_csv(local_path, parse_dates=["date"], dtype={"GEX": "float"})
+        df_local["_source"] = "local_sample"
+        return df_local.tail(60)
+
+    raise ValueError("All GEX sources failed and no local sample_gex.csv found"))
 
 # --------------------------------------------------
 # HEADER LAYOUT
