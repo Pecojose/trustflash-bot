@@ -1,14 +1,23 @@
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-import plotly.graph_objects as go
-import datetime as dt
-from urllib.error import URLError
-import io, requests, importlib.resources as pkg_resources
+"""app.py – TrustFlash Bot dashboard (stable)
+-------------------------------------------------
+* Shows VIX + 20‑day MA (yfinance)
+* Shows SPX Gamma Exposure (GEX) with mirrors and local fallback
+* No external CSS/JS – pure Streamlit + Plotly
+"""
 
-# --------------------------------------------------
-# PAGE CONFIG & GLOBAL STYLE
-# --------------------------------------------------
+from pathlib import Path
+from urllib.error import URLError
+import datetime as dt
+
+import pandas as pd
+import plotly.graph_objects as go
+import requests
+import streamlit as st
+import yfinance as yf
+
+###############################################################################
+# PAGE CONFIG & STYLE
+###############################################################################
 st.set_page_config(
     page_title="TrustFlash Bot – Dashboard",
     page_icon="⚡",
@@ -27,83 +36,90 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --------------------------------------------------
-# UTILS  ----------------------------------------------------------------------
-# --------------------------------------------------
+###############################################################################
+# HELPERS
+###############################################################################
 
-def safe_float(val):
-    """Return float or None if value is not finite."""
+def safe_float(value) -> float | None:
+    """Return a python float or None if the value is not finite."""
     try:
-        if isinstance(val, pd.Series):
-            val = val.iloc[0]
-        num = float(val)
-        if pd.isna(num):
-            return None
-        return num
+        if isinstance(value, pd.Series):
+            value = value.iloc[0]
+        out = float(value)
+        return None if pd.isna(out) else out
     except Exception:
         return None
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 
+def get_vix() -> pd.DataFrame:
+    """Return last 6 m of daily VIX with 20‑day MA; raise ValueError if <30 rows."""
+    df = yf.Ticker("^VIX").history(period="6mo", interval="1d", auto_adjust=False)
+    if df.empty or len(df) < 30:
+        raise ValueError("Insufficient VIX data")
+    df["MA20"] = df["Close"].rolling(20).mean()
+    return df.tail(90)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+
 def get_gex() -> pd.DataFrame:
-    """Return last 60 d of SPX Gamma Exposure (GEX) with multiple fallbacks.
+    """Return last 60 d of SPX Gamma Exposure.
 
-    1. Raw GitHub CSV  
-    2. jsDelivr CDN mirror  
-    3. Local `sample_gex.csv` shipped with the repo (ensures UI never breaks).
+    Order of attempts:
+    1. GitHub raw
+    2. jsDelivr mirror
+    3. Local fallback `sample_gex.csv`
     """
-    import pathlib
-
     urls = [
         "https://raw.githubusercontent.com/SqueezeMetrics/legacy-data/master/spy_gex.csv",
         "https://cdn.jsdelivr.net/gh/SqueezeMetrics/legacy-data@master/spy_gex.csv",
     ]
-
-    for src in urls:
+    for url in urls:
         try:
-            df = pd.read_csv(src, parse_dates=["date"], dtype={"GEX": "float"})
+            df = pd.read_csv(url, parse_dates=["date"], dtype={"GEX": "float"})
             if not df.empty and "GEX" in df.columns:
-                df["_source"] = src
+                df["_src"] = url
                 return df.tail(60)
         except Exception:
             continue
 
-    # ---- local fallback ----
-    local_path = pathlib.Path(__file__).with_name("sample_gex.csv")
-    if local_path.exists():
-        df_local = pd.read_csv(local_path, parse_dates=["date"], dtype={"GEX": "float"})
-        df_local["_source"] = "local_sample"
+    # LOCAL FALLBACK
+    local_csv = Path(__file__).with_name("sample_gex.csv")
+    if local_csv.exists():
+        df_local = pd.read_csv(local_csv, parse_dates=["date"], dtype={"GEX": "float"})
+        df_local["_src"] = "local_sample"
         return df_local.tail(60)
 
-    raise ValueError("All GEX sources failed and no local sample_gex.csv found")
+    raise ValueError("GEX fetch failed and no local sample_gex.csv present")
 
-# --------------------------------------------------
-# HEADER LAYOUT
-# --------------------------------------------------
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
+###############################################################################
+# HEADER
+###############################################################################
+logo_col, title_col = st.columns([1, 5])
+with logo_col:
     st.image(
         "https://trustflashtrade.com/_next/image?url=%2Flogo_nav.png&w=256&q=75",
         width=90,
     )
-with col_title:
+with title_col:
     st.markdown("## ⚡ **TrustFlash Bot** – Real‑time Market Dashboard")
-    st.caption("Gamma Exposure • Volatility • Price Levels – refreshed every 15 min")
+    st.caption("Gamma Exposure • Volatility • Price Levels – refreshed every 15 min")
 
-st.markdown("---")
+st.divider()
 
-# --------------------------------------------------
+###############################################################################
 # VIX SECTION
-# --------------------------------------------------
+###############################################################################
 try:
     vix_df = get_vix()
-    latest_vix = safe_float(vix_df["Close"].iloc[-1])
-    latest_ma = safe_float(vix_df["MA20"].iloc[-1])
+    vix_cur = safe_float(vix_df["Close"].iloc[-1])
+    vix_ma = safe_float(vix_df["MA20"].iloc[-1])
 
     m1, m2 = st.columns(2)
-    m1.metric("Current VIX", f"{latest_vix:.2f}" if latest_vix else "–")
-    m2.metric("20‑Day Avg", f"{latest_ma:.2f}" if latest_ma else "–")
+    m1.metric("Current VIX", f"{vix_cur:.2f}" if vix_cur else "–")
+    m2.metric("20‑Day Avg", f"{vix_ma:.2f}" if vix_ma else "–")
 
     st.subheader("VIX Trend vs 20‑Day Moving Average")
     fig_vix = go.Figure([
@@ -114,29 +130,29 @@ try:
                           legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     st.plotly_chart(fig_vix, use_container_width=True)
 except (URLError, ValueError):
-    st.error("VIX data currently unavailable (market closed or API down).")
+    st.error("VIX data unavailable – market closed or API down.")
 
-# --------------------------------------------------
+###############################################################################
 # GEX SECTION
-# --------------------------------------------------
+###############################################################################
 try:
     gex_df = get_gex()
     st.subheader("SPX Gamma Exposure (GEX)")
     fig_gex = go.Figure([
         go.Bar(x=gex_df["date"], y=gex_df["GEX"], marker_color="#10B981"),
     ])
-    src_note = "(sample)" if gex_df["_source"].iloc[0] == "local_sample" else ""
+    tag = "(sample)" if gex_df["_src"].iloc[0] == "local_sample" else ""
     fig_gex.update_layout(height=350, margin=dict(l=20, r=20, t=10, b=30),
-                          xaxis_title="Date", yaxis_title="Gamma ($)", title=src_note)
+                          xaxis_title="Date", yaxis_title="Gamma ($)", title=tag)
     st.plotly_chart(fig_gex, use_container_width=True)
 except (URLError, ValueError):
-    st.warning("GEX data temporarily unavailable. Source unreachable.")
+    st.warning("GEX data temporarily unavailable. All sources unreachable.")
 
-# --------------------------------------------------
+###############################################################################
 # FOOTER
-# --------------------------------------------------
+###############################################################################
 
-st.markdown("<hr style='margin-top:30px;margin-bottom:10px'>", unsafe_allow_html=True)
+st.divider()
 left, right = st.columns([3, 1])
-left.caption("Data refreshed every 15 min • Prototype v0.6")
+left.caption("Data refreshed every 15 min • Prototype v0.7")
 right.caption("© 2025 TrustFlashTrade")
