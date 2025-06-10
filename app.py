@@ -76,7 +76,7 @@ def get_gex() -> pd.DataFrame:
         df_local["_source"] = "local_sample"
         return df_local.tail(60)
 
-    raise ValueError("All GEX sources failed and no local sample_gex.csv found"))
+    raise ValueError("All GEX sources failed and no local sample_gex.csv found")
 
 # --------------------------------------------------
 # HEADER LAYOUT
