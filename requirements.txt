@@ -3,4 +3,7 @@ pandas
 yfinance
 plotly
 requests
+feedparser
+snscrape
+openai
 
