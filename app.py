@@ -17,7 +17,11 @@ import requests
 import streamlit as st
 import yfinance as yf
 import feedparser  # pip install feedparser
-import snscrape.modules.twitter as sntwitter  # pip install snscrape
+try:
+    import snscrape.modules.twitter as sntwitter  # Twitter scraping
+    TWITTER_OK = True
+except AttributeError:  # Incompatible snscrape on Python 3.13
+    TWITTER_OK = False
 import openai  # pip install openai
 
 ###############################################################################
@@ -222,4 +226,3 @@ st.divider()
 left, right = st.columns([3, 1])
 left.caption("Data refreshed every 15 min • Prototype v0.8 (News beta)")
 right.caption("© 2025 TrustFlashTrade")
-
